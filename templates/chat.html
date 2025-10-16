@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Чат - {{ username }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            <h1>Flask Чат</h1>
+            <div class="user-info">
+                <span>Вы: <strong>{{ username }}</strong></span>
+                <a href="{{ url_for('logout') }}" class="logout-btn">Выйти</a>
+            </div>
+        </div>
+
+        <div class="chat-main">
+            <div class="users-sidebar">
+                <div class="online-section">
+                    <h3>Онлайн ({{ '<span id="online-count">0</span>'|safe }})</h3>
+                    <ul id="users-list" class="users-list"></ul>
+                </div>
+                
+                <div class="user-actions">
+                    <button id="refresh-users" class="btn-secondary">Обновить список</button>
+                </div>
+            </div>
+
+            <div class="chat-area">
+                <div id="messages" class="messages-container"></div>
+                
+                <div id="typing-indicator" class="typing-indicator"></div>
+                
+                <div class="message-input-area">
+                    <input type="text" id="message-input" placeholder="Введите сообщение..." maxlength="500">
+                    <button id="send-btn">Отправить</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let currentUsername = '{{ username }}';
+        let typingTimer;
+
+        // Элементы DOM
+        const messagesContainer = document.getElementById('messages');
+        const messageInput = document.getElementById('message-input');
+        const sendBtn = document.getElementById('send-btn');
+        const usersList = document.getElementById('users-list');
+        const onlineCount = document.getElementById('online-count');
+        const typingIndicator = document.getElementById('typing-indicator');
+        const refreshUsersBtn = document.getElementById('refresh-users');
+
+        // Отправка сообщения
+        sendBtn.addEventListener('click', sendMessage);
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+
+        function sendMessage() {
+            const message = messageInput.value.trim();
+            if (message) {
+                socket.emit('send_message', { message: message });
+                messageInput.value = '';
+                stopTyping();
+            }
+        }
+
+        // Индикатор набора текста
+        messageInput.addEventListener('input', () => {
+            socket.emit('typing', { is_typing: true });
+            clearTimeout(typingTimer);
+            typingTimer = setTimeout(stopTyping, 1000);
+        });
+
+        function stopTyping() {
+            socket.emit('typing', { is_typing: false });
+        }
+
+        // Обновление списка пользователей
+        refreshUsersBtn.addEventListener('click', () => {
+            socket.emit('get_online_users');
+        });
+
+        // Обработчики событий от сервера
+        socket.on('new_message', (data) => {
+            addMessageToChat(data);
+        });
+
+        socket.on('message_history', (messages) => {
+            messages.forEach(msg => addMessageToChat(msg));
+        });
+
+        socket.on('user_connected', (data) => {
+            addSystemMessage(`${data.username} подключился`, data.timestamp);
+            updateUsersList(data.online_users);
+        });
+
+        socket.on('user_disconnected', (data) => {
+            addSystemMessage(`${data.username} отключился`, data.timestamp);
+            updateUsersList(data.online_users);
+        });
+
+        socket.on('online_users_update', (users) => {
+            updateUsersList(users);
+        });
+
+        socket.on('user_typing', (data) => {
+            if (data.is_typing) {
+                typingIndicator.textContent = `${data.username} печатает...`;
+            } else {
+                typingIndicator.textContent = '';
+            }
+        });
+
+        // Вспомогательные функции
+        function addMessageToChat(data) {
+            const messageElement = document.createElement('div');
+            messageElement.className = 'message';
+            
+            const isOwnMessage = data.username === currentUsername;
+            if (isOwnMessage) {
+                messageElement.classList.add('own-message');
+            }
+            
+            messageElement.innerHTML = `
+                <div class="message-header">
+                    <span class="username">${data.username}</span>
+                    <span class="timestamp">${data.timestamp}</span>
+                </div>
+                <div class="message-content">${escapeHtml(data.message)}</div>
+            `;
+            
+            messagesContainer.appendChild(messageElement);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        function addSystemMessage(message, timestamp) {
+            const systemMessage = document.createElement('div');
+            systemMessage.className = 'system-message';
+            systemMessage.innerHTML = `
+                <span class="system-text">${message}</span>
+                <span class="timestamp">${timestamp}</span>
+            `;
+            messagesContainer.appendChild(systemMessage);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        function updateUsersList(users) {
+            usersList.innerHTML = '';
+            onlineCount.textContent = users.length;
+            
+            // Сортируем пользователей: текущий пользователь первый, остальные по алфавиту
+            const sortedUsers = users.sort((a, b) => {
+                if (a === currentUsername) return -1;
+                if (b === currentUsername) return 1;
+                return a.localeCompare(b);
+            });
+            
+            sortedUsers.forEach(user => {
+                const userElement = document.createElement('li');
+                userElement.className = 'user-item';
+                
+                if (user === currentUsername) {
+                    userElement.classList.add('current-user');
+                    userElement.innerHTML = `
+                        <span class="user-name">${user} (Вы)</span>
+                        <span class="online-dot active"></span>
+                    `;
+                } else {
+                    userElement.innerHTML = `
+                        <span class="user-name">${user}</span>
+                        <span class="online-dot active"></span>
+                    `;
+                }
+                
+                usersList.appendChild(userElement);
+            });
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Фокусируемся на поле ввода при загрузке
+        messageInput.focus();
+    </script>
+</body>
+</html>
