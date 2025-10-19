@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Панель администратора</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .admin-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .admin-section {
+            background: white;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .user-card {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            margin: 10px 0;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #007bff;
+        }
+        .user-card.banned {
+            border-left-color: #dc3545;
+            background: #f8d7da;
+        }
+        .user-actions {
+            display: flex;
+            gap: 10px;
+        }
+        .ban-form {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin: 10px 0;
+        }
+        .ban-form input, .ban-form select {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="admin-container">
+        <div class="chat-header">
+            <h1>🔨 Панель модератора</h1>
+            <div class="user-info">
+                <span>Вы: <strong>{{ username }}</strong> <span class="role-badge role-{{ user_role }}">{{ user_role }}</span></span>
+                <div class="header-links">
+                    <a href="{{ url_for('chat') }}">Вернуться в чат</a>
+                    <a href="{{ url_for('logout') }}" class="logout-btn">Выйти</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="admin-section">
+            <h2>👥 Пользователи онлайн</h2>
+            <div id="online-users-list">
+                {% for user in online_users %}
+                <div class="user-card">
+                    <div>
+                        <strong>{{ user }}</strong>
+                        <span class="role-badge role-{{ get_user_role(user) }}">{{ get_user_role(user) }}</span>
+                    </div>
+                    <div class="user-actions">
+                        <button onclick="warnUser('{{ user }}')" class="btn-warning">⚠️ Предупредить</button>
+                        <button onclick="showBanForm('{{ user }}')" class="btn-danger">🔨 Забанить</button>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="admin-section">
+            <h2>🚫 Забаненные пользователи</h2>
+            <div id="banned-users-list"></div>
+        </div>
+
+        <div class="admin-section">
+            <h2>📊 Все пользователи</h2>
+            <div id="all-users-list"></div>
+        </div>
+
+        <!-- Форма бана -->
+        <div id="ban-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;">
+            <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 30px; border-radius: 10px; min-width: 400px;">
+                <h3>Бан пользователя: <span id="ban-username"></span></h3>
+                <div class="ban-form">
+                    <input type="text" id="ban-reason" placeholder="Причина бана" style="flex: 1;">
+                    <select id="ban-duration">
+                        <option value="1">1 час</option>
+                        <option value="24" selected>24 часа</option>
+                        <option value="168">7 дней</option>
+                        <option value="720">30 дней</option>
+                        <option value="0">Навсегда</option>
+                    </select>
+                </div>
+                <div style="margin-top: 20px; display: flex; gap: 10px;">
+                    <button onclick="banUser()" class="btn-danger">🔨 Забанить</button>
+                    <button onclick="hideBanForm()" class="btn-secondary">Отмена</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentBanUser = '';
+        
+        function showBanForm(username) {
+            currentBanUser = username;
+            document.getElementById('ban-username').textContent = username;
+            document.getElementById('ban-modal').style.display = 'block';
+        }
+        
+        function hideBanForm() {
+            document.getElementById('ban-modal').style.display = 'none';
+            currentBanUser = '';
+        }
+        
+        async function banUser() {
+            const reason = document.getElementById('ban-reason').value || 'Нарушение правил';
+            const duration = document.getElementById('ban-duration').value;
+            
+            const formData = new FormData();
+            formData.append('username', currentBanUser);
+            formData.append('reason', reason);
+            formData.append('duration', duration);
+            
+            try {
+                const response = await fetch('/admin/ban', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    alert(result.message);
+                    hideBanForm();
+                    loadBannedUsers();
+                    loadAllUsers();
+                } else {
+                    alert('Ошибка: ' + result.error);
+                }
+            } catch (error) {
+                alert('Ошибка сети');
+            }
+        }
+        
+        async function warnUser(username) {
+            const reason = prompt('Причина предупреждения:', 'Нарушение правил');
+            if (reason === null) return;
+            
+            const formData = new FormData();
+            formData.append('username', username);
+            formData.append('reason', reason);
+            
+            try {
+                const response = await fetch('/admin/warn', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                alert(result.message);
+                loadAllUsers();
+            } catch (error) {
+                alert('Ошибка сети');
+            }
+        }
+        
+        async function unbanUser(username) {
+            if (!confirm(`Разбанить пользователя ${username}?`)) return;
+            
+            const formData = new FormData();
+            formData.append('username', username);
+            
+            try {
+                const response = await fetch('/admin/unban', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    alert(result.message);
+                    loadBannedUsers();
+                    loadAllUsers();
+                } else {
+                    alert('Ошибка: ' + result.error);
+                }
+            } catch (error) {
+                alert('Ошибка сети');
+            }
+        }
+        
+        async function loadBannedUsers() {
+            try {
+                const response = await fetch('/admin/banned_users');
+                const bannedUsers = await response.json();
+                
+                const container = document.getElementById('banned-users-list');
+                container.innerHTML = '';
+                
+                bannedUsers.forEach(user => {
+                    const userCard = document.createElement('div');
+                    userCard.className = 'user-card banned';
+                    userCard.innerHTML = `
+                        <div>
+                            <strong>${user.username}</strong>
+                            <div>Причина: ${user.reason}</div>
+                            <div>Забанен: ${user.banned_at} | До: ${user.banned_until}</div>
+                            <div>Модератор: ${user.banned_by}</div>
+                        </div>
+                        <button onclick="unbanUser('${user.username}')" class="btn-success">🔓 Разбанить</button>
+                    `;
+                    container.appendChild(userCard);
+                });
+            } catch (error) {
+                console.error('Error loading banned users:', error);
+            }
+        }
+        
+        async function loadAllUsers() {
+            try {
+                const response = await fetch('/admin/users');
+                const users = await response.json();
+                
+                const container = document.getElementById('all-users-list');
+                container.innerHTML = '';
+                
+                users.forEach(user => {
+                    const userCard = document.createElement('div');
+                    userCard.className = `user-card ${user.is_banned ? 'banned' : ''}`;
+                    
+                    let status = '';
+                    if (user.is_banned) status = '🚫 Забанен';
+                    else if (user.is_online) status = '🟢 Онлайн';
+                    else status = '⚫ Оффлайн';
+                    
+                    userCard.innerHTML = `
+                        <div>
+                            <strong>${user.username}</strong>
+                            <span class="role-badge role-${user.role}">${user.role}</span>
+                            <div>Предупреждения: ${user.warnings}/3 | Статус: ${status}</div>
+                        </div>
+                        <div class="user-actions">
+                            ${!user.is_banned ? `
+                                <button onclick="warnUser('${user.username}')" class="btn-warning">⚠️</button>
+                                <button onclick="showBanForm('${user.username}')" class="btn-danger">🔨</button>
+                            ` : `
+                                <button onclick="unbanUser('${user.username}')" class="btn-success">🔓</button>
+                            `}
+                        </div>
+                    `;
+                    container.appendChild(userCard);
+                });
+            } catch (error) {
+                console.error('Error loading all users:', error);
+            }
+        }
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            loadBannedUsers();
+            loadAllUsers();
+        });
+    </script>
+</body>
+</html>
